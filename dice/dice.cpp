@@ -536,15 +536,16 @@ class dice : public eosio::contract {
       INLINE_ACTION_SENDER(eosio::token, transfer)(trade_iter->contract, {_self,N(active)}, {_self, DIVI_ACCOUNT, eosio::asset(dividends, sym), "To EOS.Win Bonus Pool [https://eos.win/dice]"} );
     }
 
-    void reward_game_token(account_name bettor, account_name inviter, eosio::asset quantity) {
+    void rewardlucky(account_name bettor, account_name inviter, eosio::asset bet_asset) {
+      require_auth(_self);
       auto pos = _globals.find(GLOBAL_ID_TOKEN_MULTIPLE);
       uint64_t multiple = 1;
       if (pos != _globals.end()) {
         multiple = pos->val;
       }
 
-      auto num = quantity.amount / 2 * multiple;
-      num = quantity.amount % 2 == 0 ? num : num + 1;
+      auto num = bet_asset.amount / 2 * multiple;
+      num = bet_asset.amount % 2 == 0 ? num : num + 1;
       if (num <= 0) {
         return;
       }
@@ -785,15 +786,12 @@ class dice : public eosio::contract {
 
       uint32_t _now = now();
 
-      if ( (roll_type == ROLL_TYPE_SMALL && roll_value < roll_border) || (roll_type == ROLL_TYPE_BIG && roll_value > roll_border) )
+      bool is_win = (roll_type == ROLL_TYPE_SMALL && roll_value < roll_border) || (roll_type == ROLL_TYPE_BIG && roll_value > roll_border);
+      if ( is_win )
       {
         int64_t reward_amt = get_bet_reward(roll_type, roll_border, bet_asset.amount);
         payout = eosio::asset(reward_amt, bet_asset.symbol);
 
-        char str[128];
-        sprintf(str, "Bet id: %lld. You win! Remember to claim your dividens with your LUCKY token! https://eos.win", cur_bet_id);
-        INLINE_ACTION_SENDER(eosio::token, transfer)(trade_iter->contract, {_self, N(active)}, {_self, bettor, payout, string(str)} );
-        
         _trades.modify(trade_iter, 0, [&](auto& a) {
           a.out += reward_amt;
         });
@@ -857,26 +855,34 @@ class dice : public eosio::contract {
       });
 
       eosio::transaction r_out;
-      auto t_data = make_tuple(cur_bet_id, bettor, bet_asset, payout_list, _seed, roll_type, roll_border, roll_value);
-      r_out.actions.emplace_back(eosio::permission_level{_self, N(active)}, _self, N(receipt), t_data);
-      r_out.delay_sec = 0;
-      r_out.send(bettor, _self);
-
-      // INLINE_ACTION_SENDER(dice, receipt)(_self, {_self, N(active)}, {cur_bet_id, bettor, bet_asset, payout_list, _seed, roll_type, roll_border, roll_value});
       
       if (inviter != TEAM_ACCOUNT && is_account(inviter)) {
         eosio::asset inviter_reward = eosio::asset(bet_asset.amount * INVITE_BONUS, bet_asset.symbol);
 
         char str[128];
         sprintf(str, "Referral reward from EOS.Win! Player: %s, Bet ID: %lld", eosio::name{bettor}.to_string().c_str(), cur_bet_id);
-        INLINE_ACTION_SENDER(eosio::token, transfer)(trade_iter->contract, {_self, N(active)}, {_self, inviter, inviter_reward, string(str)} );
+        r_out.actions.emplace_back(eosio::permission_level{_self, N(active)}, trade_iter->contract, N(transfer), eosio::currency::transfer{_self, inviter, inviter_reward, string(str)});
       }
 
       if (bet_asset.symbol == EOS_SYMBOL) {
-        reward_game_token(bettor, inviter, bet_asset);
+        r_out.actions.emplace_back(eosio::permission_level{_self, N(active)}, _self, N(rewardlucky), make_tuple(bettor, inviter, bet_asset));
       }
 
       to_bonus_bucket(bet_asset.symbol);
+
+      if ( is_win )
+      {
+        char str[128];
+        sprintf(str, "Bet id: %lld. You win! Remember to claim your dividens with your LUCKY token! https://eos.win", cur_bet_id);
+        // INLINE_ACTION_SENDER(eosio::token, transfer)(trade_iter->contract, {_self, N(active)}, {_self, bettor, payout, string(str)} );
+      
+        r_out.actions.emplace_back(eosio::permission_level{_self, N(active)}, trade_iter->contract, N(transfer), eosio::currency::transfer{_self, bettor, payout, string(str)});
+      }
+
+      // INLINE_ACTION_SENDER(dice, receipt)(_self, {_self, N(active)}, {cur_bet_id, bettor, bet_asset, payout_list, _seed, roll_type, roll_border, roll_value});
+      r_out.actions.emplace_back(eosio::permission_level{_self, N(active)}, _self, N(receipt), make_tuple(cur_bet_id, bettor, bet_asset, payout_list, _seed, roll_type, roll_border, roll_value));
+      r_out.delay_sec = 0;
+      r_out.send(bettor, _self);
     }
 
     /// @abi action
@@ -1426,4 +1432,4 @@ class dice : public eosio::contract {
 		}                                                                                 \
   }
 
-EOSIO_ABI_EX(dice, (init)(setactive)(setglobal)(setnotice)(setluckrwd)(setriskline)(setdivi)(setminbet)(receipt)(verify)(start)(resolved)(luck)(lucking)(lucked)(luckreceipt)(luckverify))
+EOSIO_ABI_EX(dice, (init)(setactive)(setglobal)(setnotice)(setluckrwd)(setriskline)(setdivi)(setminbet)(receipt)(rewardlucky)(verify)(start)(resolved)(luck)(lucking)(lucked)(luckreceipt)(luckverify))
